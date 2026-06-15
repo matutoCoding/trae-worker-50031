@@ -262,7 +262,7 @@ export default function RoofInputPage() {
                   </defs>
                   <line x1="30" y1="170" x2="570" y2="170" stroke="#6b7390" strokeDasharray="4 4" />
                   <polygon
-                    points={`60,170 300,${170 - Math.min(140, Math.max(10, 600 * Math.tan(Math.min(45, Math.max(1, form.dimensions.slopeAngle)) * Math.PI / 180) / 2)} 540,170`}
+                    points={`60,170 300,${170 - Math.min(140, Math.max(10, 600 * Math.tan(Math.min(45, Math.max(1, form.dimensions.slopeAngle || 26)) * Math.PI / 180) / 2))} 540,170`}
                     fill="url(#roofGrad)"
                     stroke="#c9a962"
                     strokeWidth="2"

@@ -459,6 +459,19 @@ export function performLeakCheck(
   }
 }
 
+function checkOverlapSufficient(
+  layoutResult: TileLayoutResult,
+  tileSpec: TileSpec
+): boolean {
+  const { headOverlap: reqHead = 0, sideOverlap: reqSide = 0 } = tileSpec
+  if (reqHead <= 0 || reqSide <= 0) return false
+  const headOverlaps = layoutResult.rows.map(r => r.actualHeadOverlap).filter(v => isFinite(v))
+  const sideOverlaps = layoutResult.rows.map(r => r.actualSideOverlap).filter(v => isFinite(v))
+  const minHead = headOverlaps.length > 0 ? Math.min(...headOverlaps) : 0
+  const minSide = sideOverlaps.length > 0 ? Math.min(...sideOverlaps) : 0
+  return minHead >= reqHead * 0.9 && minSide >= reqSide * 0.9
+}
+
 function analyzeDrainage(
   dimensions: RoofDimensions,
   tileSpec: TileSpec,
@@ -476,14 +489,10 @@ function analyzeDrainage(
 
   const denom = 1 + frictionCoeff / Math.max(0.001, cosAngle)
   const flowVelocity = Math.sqrt((2 * g * slopeLength * sinAngle) / denom) / 3
-  const safeVel = isFinite(flowVelocity) ? flowVelocity : 0.5
+  const safeVel = isFinite(flowVelocity) && flowVelocity > 0 ? flowVelocity : 0.5
 
-  const wettedArea = eaveWidth * 0.02
-  const flowRate = safeVel * wettedArea * 1000
-
-  const retentionTime = slopeLength / Math.max(0.001, safeVel)
   const roofAreaM2 = (eaveWidth * slopeLength) / 1000000
-  const maxRainIntensity = (flowRate / Math.max(0.001, roofAreaM2)) / 60
+  const rainfallRateLps = (100 / 1000) * roofAreaM2 / 3600 * 1000
 
   let drainageStatus: 'excellent' | 'good' | 'normal' | 'poor' | 'critical'
   if (slopeAngle >= 40) drainageStatus = 'excellent'
@@ -492,18 +501,26 @@ function analyzeDrainage(
   else if (slopeAngle >= 15) drainageStatus = 'poor'
   else drainageStatus = 'critical'
 
+  const overlapSufficient = checkOverlapSufficient(layoutResult, tileSpec)
+  const slopeFactor = Math.min(1, Math.max(0.1, slopeAngle / 30))
+  const efficiencyFactor = overlapSufficient ? 0.95 : 0.72
+  const drainageFraction = efficiencyFactor * slopeFactor
+
+  const flowRateLps = rainfallRateLps * drainageFraction
+  const retentionTime = slopeLength / Math.max(0.001, safeVel)
+  const maxRainIntensity = (flowRateLps / Math.max(0.001, roofAreaM2)) * 3.6
+
   const stormSimulation = simulateStorm(
     dimensions,
     tileSpec,
     layoutResult,
-    safeVel,
-    flowRate
+    overlapSufficient
   )
 
   return {
     slopeAngle,
     flowVelocity: Number(safeVel.toFixed(3)),
-    flowRate: Number(flowRate.toFixed(2)),
+    flowRate: Number(flowRateLps.toFixed(2)),
     retentionTime: Number(retentionTime.toFixed(2)),
     maxRainIntensity: Number(Math.max(0, maxRainIntensity).toFixed(1)),
     drainageStatus,
@@ -515,24 +532,24 @@ function simulateStorm(
   dimensions: RoofDimensions,
   tileSpec: TileSpec,
   layoutResult: TileLayoutResult,
-  baseVelocity: number,
-  baseFlowRate: number
+  overlapSufficient: boolean
 ): StormResult {
-  const rainfall = 100
-  const duration = 60
+  const rainfallMm = 100
+  const durationMin = 60
   const slopeLength = safeNum(dimensions.slopeLength, 3000, 1)
   const eaveWidth = safeNum(dimensions.eaveWidth, 5000, 1)
   const slopeAngle = safeNum(dimensions.slopeAngle, 26.5, 0.1)
 
   const roofAreaM2 = (slopeLength * eaveWidth) / 1000000
-  const totalRainfall = rainfall * roofAreaM2 * 1000
+  const totalRainfallL = rainfallMm * roofAreaM2
 
-  const efficiencyFactor = layoutResult.overlapSufficient ? 0.95 : 0.72
+  const efficiencyFactor = overlapSufficient ? 0.95 : 0.72
   const slopeFactor = Math.min(1, Math.max(0.1, slopeAngle / 30))
-  const actualDrainage = Math.max(0, baseFlowRate * duration * efficiencyFactor * slopeFactor)
+  const drainageFraction = efficiencyFactor * slopeFactor
 
-  const leakedWater = Math.max(0, totalRainfall - actualDrainage)
-  const leakRatio = totalRainfall > 0 ? (leakedWater / totalRainfall) * 100 : 0
+  const surfaceRunoffL = totalRainfallL * drainageFraction
+  const leakedWaterL = Math.max(0, totalRainfallL - surfaceRunoffL)
+  const leakRatio = totalRainfallL > 0 ? (leakedWaterL / totalRainfallL) * 100 : 0
 
   const standingWater: number[] = []
   const totalRows = layoutResult.rows.length
@@ -568,15 +585,15 @@ function simulateStorm(
     criticalPoints.push('檐口排水不及，短时暴雨可能倒灌')
   }
   criticalPoints.push('正脊与垂脊交接处需重点做防水加强层')
-  if (!layoutResult.overlapSufficient) {
+  if (!overlapSufficient) {
     criticalPoints.push('搭接量整体不足，建议增加一排瓦片以改善头搭接')
   }
 
   return {
-    rainfall,
-    duration,
-    surfaceRunoff: Number(Math.floor(actualDrainage).toFixed(0)),
-    leakedWater: Number(Math.floor(leakedWater).toFixed(0)),
+    rainfall: rainfallMm,
+    duration: durationMin,
+    surfaceRunoff: Number(Math.round(surfaceRunoffL)),
+    leakedWater: Number(Math.round(leakedWaterL)),
     leakRatio: Number(leakRatio.toFixed(2)),
     standingWater,
     criticalPoints

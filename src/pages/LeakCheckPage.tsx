@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { calculateTileLayout, performLeakCheck } from '../utils/calculator'
 import { saveArchive } from '../utils/storage'
-import { LeakCheckResult, TileLayoutResult, ArchiveRecord } from '../types'
+import { LeakCheckResult, TileLayoutResult, ArchiveRecord, StormResult, DrainageAnalysis } from '../types'
 
 export default function LeakCheckPage() {
   const navigate = useNavigate()
@@ -41,20 +41,27 @@ export default function LeakCheckPage() {
   )
   const layout: TileLayoutResult = layoutResult || calculateTileLayout(currentProject.dimensions, currentProject.tileSpec)
   const { dimensions, tileSpec } = currentProject
-  const { drainageAnalysis, stormSimulation } = result
+  const safeDrainage: DrainageAnalysis = result?.drainageAnalysis || {
+    slopeAngle: 0, flowVelocity: 0, flowRate: 0,
+    retentionTime: 0, maxRainIntensity: 0,
+    drainageStatus: 'normal',
+    stormSimulation: { rainfall: 100, duration: 60, surfaceRunoff: 0, leakedWater: 0, leakRatio: 0, standingWater: [], criticalPoints: [] }
+  }
+  const safeStorm: StormResult = safeDrainage.stormSimulation || {
+    rainfall: 100, duration: 60, surfaceRunoff: 0, leakedWater: 0, leakRatio: 0, standingWater: [], criticalPoints: []
+  }
+  const stormRainfall = safeStorm.rainfall ?? 100
+  const stormRunoff = safeStorm.surfaceRunoff ?? 0
+  const stormLeaked = safeStorm.leakedWater ?? 0
+  const stormLeakRatio = safeStorm.leakRatio ?? 0
+  const stormWater = Array.isArray(safeStorm.standingWater) && safeStorm.standingWater.length > 0
+    ? safeStorm.standingWater : [0]
+  const stormCritical = Array.isArray(safeStorm.criticalPoints) ? safeStorm.criticalPoints : []
 
   const overallBadge =
     result.overallStatus === 'danger' ? <span className="badge badge-danger">渗漏高风险</span> :
     result.overallStatus === 'warning' ? <span className="badge badge-warning">需整改</span> :
     <span className="badge badge-success">防漏合格</span>
-
-  const drainageBadgeMap: Record<string, JSX.Element> = {
-    excellent: <span className="badge badge-success">极佳</span>,
-    good: <span className="badge badge-success">良好</span>,
-    normal: <span className="badge badge-info">正常</span>,
-    poor: <span className="badge badge-warning">较差</span>,
-    critical: <span className="badge badge-danger">严重不足</span>
-  }
 
   const handleArchiveFull = async () => {
     const record: ArchiveRecord = {
@@ -156,16 +163,20 @@ export default function LeakCheckPage() {
           <div className="stat-card">
             <div className="stat-label">排水能力评级</div>
             <div className="stat-value" style={{ fontSize: 22 }}>
-              {drainageBadgeMap[drainageAnalysis.drainageStatus]}
+              {safeDrainage.drainageStatus === 'excellent' ? <span className="badge badge-success">极佳</span> :
+              safeDrainage.drainageStatus === 'good' ? <span className="badge badge-success">良好</span> :
+              safeDrainage.drainageStatus === 'normal' ? <span className="badge badge-info">正常</span> :
+              safeDrainage.drainageStatus === 'poor' ? <span className="badge badge-warning">较差</span> :
+              <span className="badge badge-danger">严重不足</span>}
             </div>
             <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
-              坡度 {drainageAnalysis.slopeAngle}° · 流速 {drainageAnalysis.flowVelocity} m/s
+              坡度 {safeDrainage.slopeAngle}° · 流速 {safeDrainage.flowVelocity} m/s
             </div>
           </div>
           <div className="stat-card">
             <div className="stat-label">可承受最大暴雨强度</div>
             <div className="stat-value" style={{ fontSize: 22 }}>
-              {drainageAnalysis.maxRainIntensity}<span className="stat-unit">mm/h</span>
+              {safeDrainage.maxRainIntensity}<span className="stat-unit">mm/h</span>
             </div>
             <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
               特大暴雨标准：>16 mm/h
@@ -232,23 +243,23 @@ export default function LeakCheckPage() {
           <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 16 }}>
             <div className="stat-card">
               <div className="stat-label">屋面坡度</div>
-              <div className="stat-value" style={{ fontSize: 20 }}>{drainageAnalysis.slopeAngle}°</div>
+              <div className="stat-value" style={{ fontSize: 20 }}>{safeDrainage.slopeAngle}°</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">排水流速</div>
-              <div className="stat-value" style={{ fontSize: 20 }}>{drainageAnalysis.flowVelocity}<span className="stat-unit">m/s</span></div>
+              <div className="stat-value" style={{ fontSize: 20 }}>{safeDrainage.flowVelocity}<span className="stat-unit">m/s</span></div>
             </div>
             <div className="stat-card">
               <div className="stat-label">排水流量</div>
-              <div className="stat-value" style={{ fontSize: 20 }}>{drainageAnalysis.flowRate}<span className="stat-unit">L/s</span></div>
+              <div className="stat-value" style={{ fontSize: 20 }}>{safeDrainage.flowRate}<span className="stat-unit">L/s</span></div>
             </div>
             <div className="stat-card">
               <div className="stat-label">雨水滞留时间</div>
-              <div className="stat-value" style={{ fontSize: 20 }}>{drainageAnalysis.retentionTime}<span className="stat-unit">s</span></div>
+              <div className="stat-value" style={{ fontSize: 20 }}>{safeDrainage.retentionTime}<span className="stat-unit">s</span></div>
             </div>
             <div className="stat-card">
               <div className="stat-label">最大暴雨强度</div>
-              <div className="stat-value" style={{ fontSize: 20 }}>{drainageAnalysis.maxRainIntensity}<span className="stat-unit">mm/h</span></div>
+              <div className="stat-value" style={{ fontSize: 20 }}>{safeDrainage.maxRainIntensity}<span className="stat-unit">mm/h</span></div>
             </div>
           </div>
 
@@ -290,37 +301,37 @@ export default function LeakCheckPage() {
           <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
             <div className="stat-card">
               <div className="stat-label">累计降雨量</div>
-              <div className="stat-value" style={{ fontSize: 20 }}>{stormSimulation.rainfall}<span className="stat-unit">mm</span></div>
+              <div className="stat-value" style={{ fontSize: 20 }}>{stormRainfall}<span className="stat-unit">mm</span></div>
             </div>
             <div className="stat-card">
               <div className="stat-label">排出水量</div>
-              <div className="stat-value text-success" style={{ fontSize: 20 }}>{stormSimulation.surfaceRunoff}<span className="stat-unit">L</span></div>
+              <div className="stat-value text-success" style={{ fontSize: 20 }}>{stormRunoff}<span className="stat-unit">L</span></div>
             </div>
             <div className="stat-card">
               <div className="stat-label">渗漏水量</div>
-              <div className={`stat-value ${stormSimulation.leakRatio > 5 ? 'text-danger' : 'text-warning'}`} style={{ fontSize: 20 }}>
-                {stormSimulation.leakedWater}<span className="stat-unit">L</span>
+              <div className={`stat-value ${stormLeakRatio > 5 ? 'text-danger' : 'text-warning'}`} style={{ fontSize: 20 }}>
+                {stormLeaked}<span className="stat-unit">L</span>
               </div>
             </div>
             <div className="stat-card">
               <div className="stat-label">渗漏率</div>
-              <div className={`stat-value ${stormSimulation.leakRatio > 5 ? 'text-danger' : stormSimulation.leakRatio > 1 ? 'text-warning' : 'text-success'}`} style={{ fontSize: 20 }}>
-                {stormSimulation.leakRatio}<span className="stat-unit">%</span>
+              <div className={`stat-value ${stormLeakRatio > 5 ? 'text-danger' : stormLeakRatio > 1 ? 'text-warning' : 'text-success'}`} style={{ fontSize: 20 }}>
+                {stormLeakRatio}<span className="stat-unit">%</span>
               </div>
             </div>
           </div>
 
           <div className="section-title">各排积水深度分布 (mm)</div>
-          <StandingWaterChart data={stormSimulation.standingWater} />
+          <StandingWaterChart data={stormWater} />
 
-          {stormSimulation.criticalPoints.length > 0 && (
+          {stormCritical.length > 0 && (
             <>
               <div className="section-title">暴雨工况下的薄弱环节</div>
               <div className="alert alert-warning">
                 <span className="alert-icon">⚠️</span>
                 <div className="alert-content">
                   <ul style={{ paddingLeft: 18 }}>
-                    {stormSimulation.criticalPoints.map((p, i) => <li key={i}>{p}</li>)}
+                    {stormCritical.map((p, i) => <li key={i}>{p}</li>)}
                   </ul>
                 </div>
               </div>

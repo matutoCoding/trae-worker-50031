@@ -207,7 +207,7 @@ function CreateTemplateModal({ project, isSaving, onClose, onSubmit }: CreateMod
   const [name, setName] = useState<string>(`${project.name} - 自定义范式`)
   const [description, setDescription] = useState<string>(project.notes || '')
   const [tagsInput, setTagsInput] = useState<string>(project.dimensions.roofType)
-  const [presetTile, setPresetTile] = useState<number>(0)
+  const [presetTile, setPresetTile] = useState<number>(-1)
 
   const handleSave = () => {
     const tags = String(tagsInput || '')
@@ -283,10 +283,10 @@ function CreateTemplateModal({ project, isSaving, onClose, onSubmit }: CreateMod
             value={presetTile}
             onChange={e => setPresetTile(Number(e.target.value))}
           >
+            <option value={-1}>使用当前屋面瓦件（{project.tileSpec?.name || '自定义'}）</option>
             {DEFAULT_TILE_SPECS.map((s, i) => (
               <option key={i} value={i}>{s.name}</option>
             ))}
-            <option value={-1}>使用当前屋面瓦件</option>
           </select>
         </div>
 
