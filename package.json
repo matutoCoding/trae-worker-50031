@@ -1,0 +1,46 @@
+{
+  "name": "ancient-roof-tile-system",
+  "version": "1.0.0",
+  "description": "传统古建瓦作铺瓦的排瓦计算与防漏校核生产力系统",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && electron-builder",
+    "build:renderer": "tsc && vite build",
+    "preview": "vite preview",
+    "start": "electron ."
+  },
+  "keywords": ["古建", "瓦作", "排瓦计算", "防漏校核"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.8",
+    "vite-plugin-electron": "^0.15.5",
+    "vite-plugin-electron-renderer": "^0.14.5"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.1"
+  },
+  "build": {
+    "appId": "com.ancient.rooftile",
+    "productName": "古建瓦作排瓦计算系统",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
