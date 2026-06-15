@@ -13,12 +13,16 @@ export default function TemplatePage() {
   const [filterType, setFilterType] = useState<RoofType | 'all'>('all')
   const [searchTag, setSearchTag] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
     load()
   }, [])
 
-  const load = async () => setTemplates(await getTemplates())
+  const load = async () => {
+    const list = await getTemplates()
+    setTemplates(list)
+  }
 
   const filtered = templates.filter(t => {
     if (filterType !== 'all' && t.roofType !== filterType) return false
@@ -27,7 +31,11 @@ export default function TemplatePage() {
   })
 
   const handleApply = async (t: RoofTemplate) => {
-    if (!currentProject) return
+    if (!currentProject) {
+      alert('请先录入或选择一个屋面项目')
+      navigate('/roof-input')
+      return
+    }
     if (!confirm(`应用范式「${t.name}」到当前屋面？将覆盖尺寸和瓦件规格。`)) return
     const updated: RoofProject = {
       ...currentProject,
@@ -40,13 +48,47 @@ export default function TemplatePage() {
     navigate('/roof-input')
   }
 
-  const handleSaveAsTemplate = () => setShowCreate(true)
+  const handleSaveAsTemplate = () => {
+    if (!currentProject) {
+      alert('请先录入或选择一个屋面项目')
+      navigate('/roof-input')
+      return
+    }
+    setShowCreate(true)
+  }
 
   const handleDelete = async (id: string, builtIn: boolean) => {
     if (builtIn) { alert('内置范式不可删除'); return }
     if (!confirm('确定删除该范式？')) return
     await deleteTemplate(id)
     load()
+  }
+
+  const handleCreateSubmit = async (data: { name: string; description: string; tags: string[]; tileSpecIdx: number }) => {
+    if (!currentProject) return
+    setIsSaving(true)
+    try {
+      const t: RoofTemplate = {
+        id: `tmpl-${Date.now()}`,
+        name: data.name || '未命名范式',
+        roofType: currentProject.dimensions.roofType,
+        description: data.description,
+        tileSpec: data.tileSpecIdx >= 0
+          ? { ...DEFAULT_TILE_SPECS[data.tileSpecIdx] }
+          : { ...currentProject.tileSpec },
+        standardDimensions: { ...currentProject.dimensions },
+        tags: data.tags,
+        usageCount: 0,
+        createdAt: new Date().toISOString(),
+        isBuiltIn: false
+      }
+      await saveTemplate(t)
+      setShowCreate(false)
+      load()
+      alert('范式保存成功！')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
@@ -144,8 +186,9 @@ export default function TemplatePage() {
         {showCreate && currentProject && (
           <CreateTemplateModal
             project={currentProject}
+            isSaving={isSaving}
             onClose={() => setShowCreate(false)}
-            onSaved={() => { setShowCreate(false); load() }}
+            onSubmit={handleCreateSubmit}
           />
         )}
       </div>
@@ -153,39 +196,40 @@ export default function TemplatePage() {
   )
 }
 
-function CreateTemplateModal({ project, onClose, onSaved }: {
+interface CreateModalProps {
   project: RoofProject
+  isSaving: boolean
   onClose: () => void
-  onSaved: () => void
-}) {
-  const [name, setName] = useState(`${project.name} - 自定义范式`)
-  const [description, setDescription] = useState(project.notes || '')
-  const [tagsInput, setTags] = useState(project.dimensions.roofType)
-  const [presetTile, setPresetTile] = useState(0)
+  onSubmit: (data: { name: string; description: string; tags: string[]; tileSpecIdx: number }) => void
+}
 
-  const handleSave = async () => {
-    const tags = tagsInput.split(/[,，#\s]+/).filter(Boolean)
-    const t: RoofTemplate = {
-      id: `tmpl-${Date.now()}`,
-      name: name || '未命名范式',
-      roofType: project.dimensions.roofType,
-      description,
-      tileSpec: presetTile >= 0 ? { ...DEFAULT_TILE_SPECS[presetTile] } : { ...project.tileSpec },
-      standardDimensions: { ...project.dimensions },
+function CreateTemplateModal({ project, isSaving, onClose, onSubmit }: CreateModalProps) {
+  const [name, setName] = useState<string>(`${project.name} - 自定义范式`)
+  const [description, setDescription] = useState<string>(project.notes || '')
+  const [tagsInput, setTagsInput] = useState<string>(project.dimensions.roofType)
+  const [presetTile, setPresetTile] = useState<number>(0)
+
+  const handleSave = () => {
+    const tags = String(tagsInput || '')
+      .split(/[,，#\s]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+    onSubmit({
+      name: String(name || '').trim(),
+      description: String(description || ''),
       tags,
-      usageCount: 0,
-      createdAt: new Date().toISOString(),
-      isBuiltIn: false
-    }
-    await saveTemplate(t)
-    onSaved()
+      tileSpecIdx: presetTile
+    })
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
-    }} onClick={onClose}>
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+      }}
+      onClick={onClose}
+    >
       <div
         className="card"
         style={{ width: 560, maxHeight: '85vh', overflowY: 'auto', margin: 0 }}
@@ -197,24 +241,51 @@ function CreateTemplateModal({ project, onClose, onSaved }: {
         </div>
 
         <div className="form-group mb-12">
-          <label className="form-label">范式名称</label>
-          <input className="form-input" value={name} onChange={e => setName(e.target.value)} />
+          <label className="form-label">范式名称 *</label>
+          <input
+            className="form-input"
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="给这个范式起个名字"
+          />
         </div>
 
         <div className="form-group mb-12">
           <label className="form-label">描述说明</label>
-          <textarea className="form-textarea" style={{ width: '100%' }} value={description} onChange={e => setDescription(e.target.value)} />
+          <textarea
+            className="form-textarea"
+            style={{ width: '100%' }}
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="适用场景、工艺特点等"
+          />
         </div>
 
         <div className="form-group mb-12">
           <label className="form-label">标签（逗号或空格分隔）</label>
-          <input className="form-input" value={tagsInput} onChange={e => setTagsInput(e.target.value)} placeholder="例如：北方, 民居, 青灰瓦" />
+          <input
+            className="form-input"
+            type="text"
+            value={tagsInput}
+            onChange={e => setTagsInput(e.target.value)}
+            placeholder="例如：北方, 民居, 青灰瓦"
+          />
+          <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
+            支持中英文逗号、空格、#号分隔
+          </div>
         </div>
 
         <div className="form-group mb-12">
           <label className="form-label">瓦件规格</label>
-          <select className="form-select" value={presetTile} onChange={e => setPresetTile(Number(e.target.value))}>
-            {DEFAULT_TILE_SPECS.map((s, i) => <option key={i} value={i}>{s.name}</option>)}
+          <select
+            className="form-select"
+            value={presetTile}
+            onChange={e => setPresetTile(Number(e.target.value))}
+          >
+            {DEFAULT_TILE_SPECS.map((s, i) => (
+              <option key={i} value={i}>{s.name}</option>
+            ))}
             <option value={-1}>使用当前屋面瓦件</option>
           </select>
         </div>
@@ -227,8 +298,10 @@ function CreateTemplateModal({ project, onClose, onSaved }: {
         </div>
 
         <div className="flex gap-8" style={{ justifyContent: 'flex-end' }}>
-          <button className="btn btn-secondary" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={handleSave}>保存范式</button>
+          <button className="btn btn-secondary" onClick={onClose} disabled={isSaving}>取消</button>
+          <button className="btn btn-primary" onClick={handleSave} disabled={isSaving || !name.trim()}>
+            {isSaving ? '保存中...' : '保存范式'}
+          </button>
         </div>
       </div>
     </div>

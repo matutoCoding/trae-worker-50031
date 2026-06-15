@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useProject } from '../context/ProjectContext'
 import { RoofProject, RoofDimensions, TileSpec, RoofType, DEFAULT_TILE_SPECS } from '../types'
 import { getProjects, deleteProject } from '../utils/storage'
+import { validateInputs } from '../utils/calculator'
 
 const roofTypes: RoofType[] = ['硬山', '悬山', '歇山', '庑殿', '攒尖', '卷棚']
 
@@ -11,6 +12,8 @@ export default function RoofInputPage() {
   const { currentProject, updateProject, createNewProject, setLayoutResult, setLeakResult } = useProject()
   const [projectList, setProjectList] = useState<RoofProject[]>([])
   const [form, setForm] = useState<RoofProject | null>(null)
+  const [errors, setErrors] = useState<string[]>([])
+  const [showErrors, setShowErrors] = useState(false)
 
   useEffect(() => {
     refreshProjects()
@@ -19,6 +22,7 @@ export default function RoofInputPage() {
   useEffect(() => {
     if (currentProject) {
       setForm({ ...currentProject })
+      setShowErrors(false)
     }
   }, [currentProject])
 
@@ -31,41 +35,71 @@ export default function RoofInputPage() {
 
   const updateField = <K extends keyof RoofProject>(key: K, value: RoofProject[K]) => {
     setForm(prev => prev ? { ...prev, [key]: value } : prev)
+    setShowErrors(false)
   }
 
   const updateDim = <K extends keyof RoofDimensions>(key: K, value: RoofDimensions[K]) => {
     setForm(prev => prev ? { ...prev, dimensions: { ...prev.dimensions, [key]: value } } : prev)
+    setShowErrors(false)
   }
 
   const updateTile = <K extends keyof TileSpec>(key: K, value: TileSpec[K]) => {
     setForm(prev => prev ? { ...prev, tileSpec: { ...prev.tileSpec, [key]: value } } : prev)
+    setShowErrors(false)
   }
 
   const applyPresetTile = (spec: TileSpec) => {
     setForm(prev => prev ? { ...prev, tileSpec: { ...spec } } : prev)
+    setShowErrors(false)
+  }
+
+  const runValidation = (): string[] => {
+    if (!form) return ['表单未初始化']
+    return validateInputs(form.dimensions, form.tileSpec)
   }
 
   const handleSave = async () => {
     if (!form) return
+    const errs = runValidation()
+    if (errs.length > 0) {
+      setErrors(errs)
+      setShowErrors(true)
+      if (!confirm(`当前数据有 ${errs.length} 项问题，是否仍要保存？\n\n• ${errs.slice(0, 5).join('\n• ')}${errs.length > 5 ? `\n...还有 ${errs.length - 5} 项` : ''}`)) {
+        return
+      }
+    }
     await updateProject(form)
     refreshProjects()
+    setShowErrors(false)
   }
 
   const handleSaveAndCalc = async () => {
     if (!form) return
+    const errs = runValidation()
+    if (errs.length > 0) {
+      setErrors(errs)
+      setShowErrors(true)
+      alert(`参数校验未通过，无法计算排瓦：\n\n${errs.map((e, i) => `${i + 1}. ${e}`).join('\n')}`)
+      return
+    }
     await updateProject(form)
     setLayoutResult(null)
     setLeakResult(null)
+    setShowErrors(false)
     navigate('/tile-layout')
   }
 
   const handleSelectProject = (p: RoofProject) => {
     setForm({ ...p })
+    setShowErrors(false)
+    setErrors([])
   }
 
   const handleNewProject = () => {
     const p = createNewProject()
     setForm({ ...p })
+    setShowErrors(false)
+    setErrors([])
   }
 
   const handleDeleteProject = async (id: string) => {
@@ -90,7 +124,20 @@ export default function RoofInputPage() {
           </button>
         </div>
       </div>
+
       <div className="content-body">
+        {showErrors && errors.length > 0 && (
+          <div className="alert alert-danger">
+            <span className="alert-icon">⚠️</span>
+            <div className="alert-content">
+              <strong>参数校验发现以下问题：</strong>
+              <ul style={{ paddingLeft: 18, marginTop: 6 }}>
+                {errors.map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 24 }}>
           <div>
             <div className="card">
@@ -131,21 +178,25 @@ export default function RoofInputPage() {
               <div className="card-title">屋面尺寸</div>
               <div className="form-grid">
                 <div className="form-group">
-                  <label className="form-label">坡长（沿坡面）(mm)</label>
+                  <label className="form-label">坡长（沿坡面）(mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.dimensions.slopeLength}
                     onChange={e => updateDim('slopeLength', Number(e.target.value))}
+                    min={10}
+                    step={10}
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">檐口面阔 (mm)</label>
+                  <label className="form-label">檐口面阔 (mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.dimensions.eaveWidth}
                     onChange={e => updateDim('eaveWidth', Number(e.target.value))}
+                    min={10}
+                    step={10}
                   />
                 </div>
                 <div className="form-group">
@@ -155,16 +206,20 @@ export default function RoofInputPage() {
                     className="form-input"
                     value={form.dimensions.ridgeLength}
                     onChange={e => updateDim('ridgeLength', Number(e.target.value))}
+                    min={0}
+                    step={10}
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">屋面坡度 (°)</label>
+                  <label className="form-label">屋面坡度 (°) *</label>
                   <input
                     type="number"
                     step="0.1"
                     className="form-input"
                     value={form.dimensions.slopeAngle}
                     onChange={e => updateDim('slopeAngle', Number(e.target.value))}
+                    min={0.1}
+                    max={89}
                   />
                   <span className="text-muted" style={{ fontSize: 12, marginTop: 4 }}>
                     五举≈26.6°，六举≈31°，七五举≈37°
@@ -177,6 +232,8 @@ export default function RoofInputPage() {
                     className="form-input"
                     value={form.dimensions.eaveOverhang}
                     onChange={e => updateDim('eaveOverhang', Number(e.target.value))}
+                    min={0}
+                    step={10}
                   />
                 </div>
                 <div className="form-group">
@@ -186,6 +243,8 @@ export default function RoofInputPage() {
                     className="form-input"
                     value={form.dimensions.ridgeHeight}
                     onChange={e => updateDim('ridgeHeight', Number(e.target.value))}
+                    min={0}
+                    step={10}
                   />
                 </div>
               </div>
@@ -203,19 +262,13 @@ export default function RoofInputPage() {
                   </defs>
                   <line x1="30" y1="170" x2="570" y2="170" stroke="#6b7390" strokeDasharray="4 4" />
                   <polygon
-                    points={`60,170 300,${170 - 600 * Math.tan(form.dimensions.slopeAngle * Math.PI / 180) / 2} 540,170`}
+                    points={`60,170 300,${170 - Math.min(140, Math.max(10, 600 * Math.tan(Math.min(45, Math.max(1, form.dimensions.slopeAngle)) * Math.PI / 180) / 2)} 540,170`}
                     fill="url(#roofGrad)"
                     stroke="#c9a962"
                     strokeWidth="2"
                   />
                   <text x="300" y="190" textAnchor="middle" fill="#9ba3b8" fontSize="11">
                     檐口宽度 {form.dimensions.eaveWidth}mm
-                  </text>
-                  <text x="170" y="100" fill="#e8c878" fontSize="11" transform={`rotate(${-form.dimensions.slopeAngle}, 170, 110)`}>
-                    坡长 {form.dimensions.slopeLength}mm
-                  </text>
-                  <text x="500" y="100" fill="#e8c878" fontSize="11" transform={`rotate(${form.dimensions.slopeAngle}, 490, 110)`}>
-                    坡度 {form.dimensions.slopeAngle}°
                   </text>
                 </svg>
               </div>
@@ -242,21 +295,25 @@ export default function RoofInputPage() {
               <div className="section-title">底瓦（板瓦）</div>
               <div className="form-grid">
                 <div className="form-group">
-                  <label className="form-label">底瓦长度 (mm)</label>
+                  <label className="form-label">底瓦长度 (mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.tileSpec.bottomTileLength}
                     onChange={e => updateTile('bottomTileLength', Number(e.target.value))}
+                    min={1}
+                    step={1}
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">底瓦宽度 (mm)</label>
+                  <label className="form-label">底瓦宽度 (mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.tileSpec.bottomTileWidth}
                     onChange={e => updateTile('bottomTileWidth', Number(e.target.value))}
+                    min={1}
+                    step={1}
                   />
                 </div>
               </div>
@@ -264,21 +321,25 @@ export default function RoofInputPage() {
               <div className="section-title">盖瓦（筒瓦）</div>
               <div className="form-grid">
                 <div className="form-group">
-                  <label className="form-label">盖瓦长度 (mm)</label>
+                  <label className="form-label">盖瓦长度 (mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.tileSpec.topTileLength}
                     onChange={e => updateTile('topTileLength', Number(e.target.value))}
+                    min={1}
+                    step={1}
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">盖瓦宽度 (mm)</label>
+                  <label className="form-label">盖瓦宽度 (mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.tileSpec.topTileWidth}
                     onChange={e => updateTile('topTileWidth', Number(e.target.value))}
+                    min={1}
+                    step={1}
                   />
                 </div>
               </div>
@@ -286,31 +347,37 @@ export default function RoofInputPage() {
               <div className="section-title">搭接参数（压七露三：头露约30%）</div>
               <div className="form-grid">
                 <div className="form-group">
-                  <label className="form-label">头搭接（上下）(mm)</label>
+                  <label className="form-label">头搭接（上下）(mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.tileSpec.headOverlap}
                     onChange={e => updateTile('headOverlap', Number(e.target.value))}
+                    min={1}
+                    step={1}
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">边搭接（左右）(mm)</label>
+                  <label className="form-label">边搭接（左右）(mm) *</label>
                   <input
                     type="number"
                     className="form-input"
                     value={form.tileSpec.sideOverlap}
                     onChange={e => updateTile('sideOverlap', Number(e.target.value))}
+                    min={1}
+                    step={1}
                   />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">外露比例（如 0.3 为露三）</label>
+                  <label className="form-label">外露比例（如 0.3 为露三）*</label>
                   <input
                     type="number"
                     step="0.01"
                     className="form-input"
                     value={form.tileSpec.exposedRatio}
                     onChange={e => updateTile('exposedRatio', Number(e.target.value))}
+                    min={0.05}
+                    max={0.8}
                   />
                 </div>
               </div>
@@ -353,7 +420,8 @@ export default function RoofInputPage() {
                         padding: '12px 0',
                         borderBottom: '1px solid var(--border-color)',
                         cursor: 'pointer',
-                        opacity: currentProject?.id === p.id ? 1 : 0.85
+                        opacity: currentProject?.id === p.id ? 1 : 0.85,
+                        background: currentProject?.id === p.id ? 'rgba(201,169,98,0.08)' : 'transparent'
                       }}
                       onClick={() => handleSelectProject(p)}
                     >

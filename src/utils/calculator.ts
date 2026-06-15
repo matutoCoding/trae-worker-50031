@@ -10,33 +10,118 @@ import {
   MaterialItem
 } from '../types'
 
+function safeNum(v: number, fallback: number, min = 0.001): number {
+  if (v == null || isNaN(v) || !isFinite(v)) return fallback
+  return Math.max(min, v)
+}
+
+function seededNoise(seed: number): number {
+  const s = Math.sin(seed * 12.9898 + 78.233) * 43758.5453
+  return s - Math.floor(s)
+}
+
+export function validateInputs(dimensions: RoofDimensions, tileSpec: TileSpec): string[] {
+  const errors: string[] = []
+
+  if (!dimensions.slopeLength || dimensions.slopeLength <= 0) {
+    errors.push('坡长必须大于 0')
+  } else if (dimensions.slopeLength < 500) {
+    errors.push('坡长过短（< 500mm），请检查数值')
+  } else if (dimensions.slopeLength > 50000) {
+    errors.push('坡长过长（> 50m），请检查数值')
+  }
+
+  if (!dimensions.eaveWidth || dimensions.eaveWidth <= 0) {
+    errors.push('檐口宽度必须大于 0')
+  } else if (dimensions.eaveWidth < 500) {
+    errors.push('檐口宽度过小（< 500mm），请检查数值')
+  } else if (dimensions.eaveWidth > 100000) {
+    errors.push('檐口宽度过大（> 100m），请检查数值')
+  }
+
+  if (!dimensions.slopeAngle || dimensions.slopeAngle <= 0) {
+    errors.push('屋面坡度必须大于 0')
+  } else if (dimensions.slopeAngle < 1) {
+    errors.push('屋面坡度过小（< 1°），排水会失效')
+  } else if (dimensions.slopeAngle > 85) {
+    errors.push('屋面坡度过大（> 85°），请检查数值')
+  }
+
+  if (!tileSpec.bottomTileLength || tileSpec.bottomTileLength <= 0) {
+    errors.push('底瓦长度必须大于 0')
+  }
+  if (!tileSpec.bottomTileWidth || tileSpec.bottomTileWidth <= 0) {
+    errors.push('底瓦宽度必须大于 0')
+  }
+  if (!tileSpec.topTileLength || tileSpec.topTileLength <= 0) {
+    errors.push('盖瓦长度必须大于 0')
+  }
+  if (!tileSpec.topTileWidth || tileSpec.topTileWidth <= 0) {
+    errors.push('盖瓦宽度必须大于 0')
+  }
+
+  if (!tileSpec.exposedRatio || tileSpec.exposedRatio <= 0) {
+    errors.push('外露比例必须大于 0')
+  } else if (tileSpec.exposedRatio >= 0.9) {
+    errors.push('外露比例过大（≥ 0.9），瓦片几乎没有搭接')
+  }
+
+  if (!tileSpec.headOverlap || tileSpec.headOverlap <= 0) {
+    errors.push('头搭接必须大于 0')
+  } else if (tileSpec.headOverlap >= tileSpec.bottomTileLength) {
+    errors.push('头搭接不能大于等于底瓦长度')
+  }
+
+  if (!tileSpec.sideOverlap || tileSpec.sideOverlap <= 0) {
+    errors.push('边搭接必须大于 0')
+  } else if (tileSpec.sideOverlap >= tileSpec.bottomTileWidth) {
+    errors.push('边搭接不能大于等于底瓦宽度')
+  }
+
+  return errors
+}
+
 export function calculateTileLayout(
   dimensions: RoofDimensions,
   tileSpec: TileSpec
 ): TileLayoutResult {
-  const { slopeLength, eaveWidth, roofType, eaveOverhang, ridgeLength } = dimensions
+  const slopeLength = safeNum(dimensions.slopeLength, 3000, 10)
+  const eaveWidth = safeNum(dimensions.eaveWidth, 5000, 10)
+  const { roofType, ridgeLength, ridgeHeight } = dimensions
   const {
-    bottomTileLength,
-    bottomTileWidth,
-    topTileLength,
-    topTileWidth,
+    bottomTileLength: rawBTL,
+    bottomTileWidth: rawBTW,
+    topTileLength: rawTTL,
+    topTileWidth: rawTTW,
     headOverlap: baseHeadOverlap,
     sideOverlap: baseSideOverlap,
-    exposedRatio
+    exposedRatio: rawER
   } = tileSpec
 
-  const effectiveExposedLength = bottomTileLength * exposedRatio
-  const effectiveBottomWidth = bottomTileWidth - baseSideOverlap
-  const effectiveTopWidth = topTileWidth - baseSideOverlap
+  const bottomTileLength = safeNum(rawBTL, 320, 10)
+  const bottomTileWidth = safeNum(rawBTW, 220, 10)
+  const topTileLength = safeNum(rawTTL, 300, 10)
+  const topTileWidth = safeNum(rawTTW, 130, 10)
+  const exposedRatio = Math.min(0.85, Math.max(0.05, rawER || 0.3))
 
-  const totalRows = Math.ceil(slopeLength / effectiveExposedLength)
+  const effectiveExposedLength = bottomTileLength * exposedRatio
+  const effectiveBottomWidth = Math.max(1, bottomTileWidth - Math.max(0, baseSideOverlap || 0))
+  const effectiveTopWidth = Math.max(1, topTileWidth - Math.max(0, baseSideOverlap || 0))
+
+  let totalRows = Math.ceil(slopeLength / effectiveExposedLength)
+  totalRows = Math.max(1, Math.min(5000, totalRows))
 
   const actualHeadOverlap = bottomTileLength - slopeLength / totalRows
-  const headDeviation = Math.abs(actualHeadOverlap - baseHeadOverlap) / baseHeadOverlap
+  const headDeviation = baseHeadOverlap
+    ? Math.abs(actualHeadOverlap - baseHeadOverlap) / baseHeadOverlap
+    : 0
 
-  const colsPerRow = Math.ceil(eaveWidth / effectiveBottomWidth)
+  let colsPerRow = Math.ceil(eaveWidth / effectiveBottomWidth)
+  colsPerRow = Math.max(1, Math.min(5000, colsPerRow))
   const actualSideOverlap = bottomTileWidth - eaveWidth / colsPerRow
-  const sideDeviation = Math.abs(actualSideOverlap - baseSideOverlap) / baseSideOverlap
+  const sideDeviation = baseSideOverlap
+    ? Math.abs(actualSideOverlap - baseSideOverlap) / baseSideOverlap
+    : 0
 
   const rows: TileRowResult[] = []
   let totalBottomTiles = 0
@@ -74,19 +159,21 @@ export function calculateTileLayout(
 
   const dripTiles = colsPerRow + 2
   const headTiles = colsPerRow
-  const gutters = colsPerRow - 1
+  const gutters = Math.max(0, colsPerRow - 1)
 
-  const mainRidgeTiles = Math.ceil(ridgeLength / (topTileLength * 0.7))
+  const safeTopLen = Math.max(1, topTileLength)
+  const mainRidgeTiles = Math.max(0, Math.ceil((ridgeLength || 0) / (safeTopLen * 0.7)))
 
   let verticalRidgeTiles = 0
   let hipRidgeTiles = 0
+  const ridgeH = Math.max(0, ridgeHeight || 0)
   if (roofType === '歇山' || roofType === '庑殿') {
-    hipRidgeTiles = Math.ceil(slopeLength / (topTileLength * 0.6)) * 2
-    verticalRidgeTiles = Math.ceil(dimensions.ridgeHeight / (topTileLength * 0.5)) * 2
+    hipRidgeTiles = Math.ceil(slopeLength / (safeTopLen * 0.6)) * 2
+    verticalRidgeTiles = Math.ceil(ridgeH / (safeTopLen * 0.5)) * 2
   } else if (roofType === '硬山' || roofType === '悬山') {
-    verticalRidgeTiles = Math.ceil(dimensions.ridgeHeight / (topTileLength * 0.5)) * 2
+    verticalRidgeTiles = Math.ceil(ridgeH / (safeTopLen * 0.5)) * 2
   } else if (roofType === '攒尖') {
-    verticalRidgeTiles = Math.ceil(slopeLength / (topTileLength * 0.6)) * 4
+    verticalRidgeTiles = Math.ceil(slopeLength / (safeTopLen * 0.6)) * 4
   }
 
   const totalMaterials: MaterialItem[] = buildMaterialList(
@@ -131,10 +218,15 @@ function buildMaterialList(
   const ridgeLoss = 0.08
   const eaveLoss = 0.06
 
+  const btl = tileSpec.bottomTileLength || 0
+  const btw = tileSpec.bottomTileWidth || 0
+  const ttl = tileSpec.topTileLength || 0
+  const ttw = tileSpec.topTileWidth || 0
+
   const items: MaterialItem[] = [
     {
       name: '底瓦',
-      specification: `${tileSpec.bottomTileLength}×${tileSpec.bottomTileWidth}mm`,
+      specification: `${btl}×${btw}mm`,
       quantity: bottomTiles,
       unit: '块',
       lossRate: standardLoss,
@@ -143,7 +235,7 @@ function buildMaterialList(
     },
     {
       name: '盖瓦',
-      specification: `${tileSpec.topTileLength}×${tileSpec.topTileWidth}mm`,
+      specification: `${ttl}×${ttw}mm`,
       quantity: topTiles,
       unit: '块',
       lossRate: standardLoss,
@@ -152,7 +244,7 @@ function buildMaterialList(
     },
     {
       name: '滴水瓦',
-      specification: `檐口专用`,
+      specification: '檐口专用',
       quantity: dripTiles,
       unit: '块',
       lossRate: eaveLoss,
@@ -161,7 +253,7 @@ function buildMaterialList(
     },
     {
       name: '勾头瓦',
-      specification: `檐口专用`,
+      specification: '檐口专用',
       quantity: headTiles,
       unit: '块',
       lossRate: eaveLoss,
@@ -170,7 +262,7 @@ function buildMaterialList(
     },
     {
       name: '瓦当',
-      specification: `配套`,
+      specification: '配套',
       quantity: headTiles,
       unit: '件',
       lossRate: 0.02,
@@ -182,7 +274,7 @@ function buildMaterialList(
   if (gutters > 0) {
     items.push({
       name: '托泥沟',
-      specification: `檐沟专用`,
+      specification: '檐沟专用',
       quantity: gutters,
       unit: '件',
       lossRate: 0.03,
@@ -194,7 +286,7 @@ function buildMaterialList(
   if (mainRidge > 0) {
     items.push({
       name: '正脊筒瓦',
-      specification: `脊部专用`,
+      specification: '脊部专用',
       quantity: mainRidge,
       unit: '块',
       lossRate: ridgeLoss,
@@ -203,7 +295,7 @@ function buildMaterialList(
     })
     items.push({
       name: '正吻/吞脊兽',
-      specification: `正脊两端`,
+      specification: '正脊两端',
       quantity: 2,
       unit: '件',
       lossRate: 0,
@@ -215,7 +307,7 @@ function buildMaterialList(
   if (verticalRidge > 0) {
     items.push({
       name: '垂脊筒瓦',
-      specification: `垂脊专用`,
+      specification: '垂脊专用',
       quantity: verticalRidge,
       unit: '块',
       lossRate: ridgeLoss,
@@ -224,7 +316,7 @@ function buildMaterialList(
     })
     items.push({
       name: '垂兽',
-      specification: `垂脊下端`,
+      specification: '垂脊下端',
       quantity: Math.ceil(verticalRidge / 10),
       unit: '件',
       lossRate: 0,
@@ -236,7 +328,7 @@ function buildMaterialList(
   if (hipRidge > 0) {
     items.push({
       name: '戗脊筒瓦',
-      specification: `戗脊专用`,
+      specification: '戗脊专用',
       quantity: hipRidge,
       unit: '块',
       lossRate: ridgeLoss,
@@ -245,7 +337,7 @@ function buildMaterialList(
     })
     items.push({
       name: '戗兽',
-      specification: `戗脊下端`,
+      specification: '戗脊下端',
       quantity: Math.ceil(hipRidge / 10),
       unit: '件',
       lossRate: 0,
@@ -256,7 +348,7 @@ function buildMaterialList(
 
   items.push({
     name: '灰背/泥背',
-    specification: `铺垫层`,
+    specification: '铺垫层',
     quantity: Math.ceil(bottomTiles * 0.5),
     unit: 'kg',
     lossRate: 0.1,
@@ -272,11 +364,13 @@ export function performLeakCheck(
   tileSpec: TileSpec,
   layoutResult: TileLayoutResult
 ): LeakCheckResult {
-  const { slopeAngle, slopeLength } = dimensions
-  const { headOverlap: requiredHeadOverlap, sideOverlap: requiredSideOverlap } = tileSpec
+  const slopeAngle = safeNum(dimensions.slopeAngle, 26.5, 0.1)
+  const { headOverlap: requiredHeadOverlap = 70, sideOverlap: requiredSideOverlap = 50 } = tileSpec
 
-  const minHeadOverlap = Math.min(...layoutResult.rows.map(r => r.actualHeadOverlap))
-  const minSideOverlap = Math.min(...layoutResult.rows.map(r => r.actualSideOverlap))
+  const headOverlaps = layoutResult.rows.map(r => r.actualHeadOverlap).filter(v => isFinite(v))
+  const sideOverlaps = layoutResult.rows.map(r => r.actualSideOverlap).filter(v => isFinite(v))
+  const minHeadOverlap = headOverlaps.length > 0 ? Math.min(...headOverlaps) : 0
+  const minSideOverlap = sideOverlaps.length > 0 ? Math.min(...sideOverlaps) : 0
 
   const overlapSufficient =
     minHeadOverlap >= requiredHeadOverlap * 0.9 &&
@@ -287,7 +381,7 @@ export function performLeakCheck(
   const risks: string[] = []
 
   layoutResult.rows.forEach(row => {
-    if (row.actualHeadOverlap < requiredHeadOverlap * 0.85) {
+    if (requiredHeadOverlap > 0 && row.actualHeadOverlap < requiredHeadOverlap * 0.85) {
       leakPoints.push({
         rowIndex: row.rowIndex,
         position: row.rowIndex <= 3 ? '檐口' : row.rowIndex >= layoutResult.totalRows - 2 ? '脊部' : '中部',
@@ -296,7 +390,7 @@ export function performLeakCheck(
         description: `第${row.rowIndex}排头搭接${row.actualHeadOverlap}mm，低于要求值${requiredHeadOverlap}mm的85%`,
         recommendation: '调整排距，增加瓦片搭接长度或补充额外瓦片'
       })
-    } else if (row.actualHeadOverlap < requiredHeadOverlap * 0.95) {
+    } else if (requiredHeadOverlap > 0 && row.actualHeadOverlap < requiredHeadOverlap * 0.95) {
       leakPoints.push({
         rowIndex: row.rowIndex,
         position: row.rowIndex <= 3 ? '檐口' : row.rowIndex >= layoutResult.totalRows - 2 ? '脊部' : '中部',
@@ -370,7 +464,9 @@ function analyzeDrainage(
   tileSpec: TileSpec,
   layoutResult: TileLayoutResult
 ): DrainageAnalysis {
-  const { slopeAngle, slopeLength, eaveWidth } = dimensions
+  const slopeAngle = safeNum(dimensions.slopeAngle, 26.5, 0.1)
+  const slopeLength = safeNum(dimensions.slopeLength, 3000, 1)
+  const eaveWidth = safeNum(dimensions.eaveWidth, 5000, 1)
   const g = 9.81
   const frictionCoeff = 0.15
 
@@ -378,12 +474,16 @@ function analyzeDrainage(
   const sinAngle = Math.sin(angleRad)
   const cosAngle = Math.cos(angleRad)
 
-  const flowVelocity = Math.sqrt((2 * g * slopeLength * sinAngle) / (1 + frictionCoeff / cosAngle)) / 3
-  const wettedArea = eaveWidth * 0.02
-  const flowRate = flowVelocity * wettedArea * 1000
+  const denom = 1 + frictionCoeff / Math.max(0.001, cosAngle)
+  const flowVelocity = Math.sqrt((2 * g * slopeLength * sinAngle) / denom) / 3
+  const safeVel = isFinite(flowVelocity) ? flowVelocity : 0.5
 
-  const retentionTime = slopeLength / flowVelocity
-  const maxRainIntensity = (flowRate / (eaveWidth * slopeLength / 1000000)) / 60
+  const wettedArea = eaveWidth * 0.02
+  const flowRate = safeVel * wettedArea * 1000
+
+  const retentionTime = slopeLength / Math.max(0.001, safeVel)
+  const roofAreaM2 = (eaveWidth * slopeLength) / 1000000
+  const maxRainIntensity = (flowRate / Math.max(0.001, roofAreaM2)) / 60
 
   let drainageStatus: 'excellent' | 'good' | 'normal' | 'poor' | 'critical'
   if (slopeAngle >= 40) drainageStatus = 'excellent'
@@ -396,16 +496,16 @@ function analyzeDrainage(
     dimensions,
     tileSpec,
     layoutResult,
-    flowVelocity,
+    safeVel,
     flowRate
   )
 
   return {
     slopeAngle,
-    flowVelocity: Number(flowVelocity.toFixed(3)),
+    flowVelocity: Number(safeVel.toFixed(3)),
     flowRate: Number(flowRate.toFixed(2)),
     retentionTime: Number(retentionTime.toFixed(2)),
-    maxRainIntensity: Number(maxRainIntensity.toFixed(1)),
+    maxRainIntensity: Number(Math.max(0, maxRainIntensity).toFixed(1)),
     drainageStatus,
     stormSimulation
   }
@@ -420,43 +520,63 @@ function simulateStorm(
 ): StormResult {
   const rainfall = 100
   const duration = 60
+  const slopeLength = safeNum(dimensions.slopeLength, 3000, 1)
+  const eaveWidth = safeNum(dimensions.eaveWidth, 5000, 1)
+  const slopeAngle = safeNum(dimensions.slopeAngle, 26.5, 0.1)
 
-  const roofArea = (dimensions.slopeLength * dimensions.eaveWidth) / 1000000
-  const totalRainfall = rainfall * roofArea * 1000
+  const roofAreaM2 = (slopeLength * eaveWidth) / 1000000
+  const totalRainfall = rainfall * roofAreaM2 * 1000
 
-  const efficiencyFactor = layoutResult.overlapSufficient ? 0.95 : 0.75
-  const slopeFactor = Math.min(1, dimensions.slopeAngle / 30)
-  const actualDrainage = baseFlowRate * duration * efficiencyFactor * slopeFactor
+  const efficiencyFactor = layoutResult.overlapSufficient ? 0.95 : 0.72
+  const slopeFactor = Math.min(1, Math.max(0.1, slopeAngle / 30))
+  const actualDrainage = Math.max(0, baseFlowRate * duration * efficiencyFactor * slopeFactor)
 
   const leakedWater = Math.max(0, totalRainfall - actualDrainage)
-  const leakRatio = (leakedWater / totalRainfall) * 100
+  const leakRatio = totalRainfall > 0 ? (leakedWater / totalRainfall) * 100 : 0
 
   const standingWater: number[] = []
-  layoutResult.rows.forEach(row => {
-    if (row.hasLeakRisk || row.rowIndex <= 2) {
-      standingWater.push(Number((Math.random() * 5 + (row.riskLevel === 'danger' ? 3 : 0)).toFixed(2)))
-    } else {
-      standingWater.push(Number((Math.random() * 1.5).toFixed(2)))
-    }
-  })
+  const totalRows = layoutResult.rows.length
+
+  for (let i = 0; i < totalRows; i++) {
+    const row = layoutResult.rows[i]
+    const ri = row.rowIndex
+
+    const baseDepth = 0.5 + (1 - slopeFactor) * 4
+
+    const rowFactor = row.hasLeakRisk ? 1.8 : 1.0
+    const riskBonus = row.riskLevel === 'danger' ? 2.5 : row.riskLevel === 'warning' ? 1.0 : 0
+
+    const eaveBonus = ri <= 3 ? (4 - ri) * 0.4 : 0
+    const ridgeBonus = ri >= totalRows - 1 ? 0.8 : 0
+
+    const noise = seededNoise(ri * 7.3 + totalRows * 0.1 + slopeAngle * 0.01) * 0.6
+
+    let depth = (baseDepth + riskBonus + eaveBonus + ridgeBonus + noise) * rowFactor
+    depth = Math.max(0.1, Math.min(12, depth))
+
+    standingWater.push(Number(depth.toFixed(2)))
+  }
 
   const criticalPoints: string[] = []
-  if (dimensions.slopeAngle < 20) {
+  if (slopeAngle < 20) {
     criticalPoints.push('屋面整体坡度不足，易大面积积水')
   }
   if (layoutResult.misalignedRows.length > 0) {
-    criticalPoints.push(`第${layoutResult.misalignedRows.join(',')}排瓦垄歪斜处`)
+    criticalPoints.push(`第${layoutResult.misalignedRows.join('、')}排瓦垄歪斜处积水偏重`)
   }
   if (leakRatio > 5) {
-    criticalPoints.push('檐口排水不及，可能倒灌')
+    criticalPoints.push('檐口排水不及，短时暴雨可能倒灌')
   }
-  criticalPoints.push('正脊与垂脊交接处需重点做防水')
+  criticalPoints.push('正脊与垂脊交接处需重点做防水加强层')
+  if (!layoutResult.overlapSufficient) {
+    criticalPoints.push('搭接量整体不足，建议增加一排瓦片以改善头搭接')
+  }
 
   return {
     rainfall,
     duration,
-    surfaceRunoff: Number(actualDrainage.toFixed(0)),
-    leakedWater: Number(leakedWater.toFixed(0)),
+    surfaceRunoff: Number(Math.floor(actualDrainage).toFixed(0)),
+    leakedWater: Number(Math.floor(leakedWater).toFixed(0)),
     leakRatio: Number(leakRatio.toFixed(2)),
     standingWater,
     criticalPoints
